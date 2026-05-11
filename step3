@@ -1,0 +1,154 @@
+------- PlayH Music Player (FINAL POLISHED COMPUTRONICS BUILD) -------
+
+-- CONFIG
+local infoscreens = {}
+local exclude_screens = {}
+
+local autostartPlay = false
+local defVol = 70
+
+local chesttype = "minecraft:chest"
+local updaterate = 1
+local readspeed = 5
+
+---------------------------------------------------------
+-- PERIPHERALS
+---------------------------------------------------------
+
+local b = require("./button").monitor
+local bf = require("./bigfont")
+
+local m = peripheral.find("monitor")
+local s = peripheral.find("tape_drive")
+local c = peripheral.find(chesttype)
+
+if not m then error("Missing monitor") end
+if not s then error("Missing tape drive") end
+if not c then error("Missing chest") end
+
+m.setTextScale(0.5)
+m.setBackgroundColor(colors.black)
+m.clear()
+
+---------------------------------------------------------
+-- VOLUME (CLEAN + STABLE)
+---------------------------------------------------------
+
+local function applyVolume(v)
+    v = math.max(0, math.min(v, 100))
+    local scaled = (v / 100)
+    scaled = scaled * scaled
+    s.setVolume(scaled)
+end
+
+---------------------------------------------------------
+-- BASIC TAPE CONTROL HELPERS
+---------------------------------------------------------
+
+function moveIn(num)
+    s.pullItems(peripheral.getName(c), num, 64, 1)
+end
+
+function moveOut()
+    s.pushItems(peripheral.getName(c), 1, 64)
+end
+
+---------------------------------------------------------
+-- SAFE CHEST SORT (NO RUNTIME IMPACT ON AUDIO)
+---------------------------------------------------------
+
+local function sortchest()
+    local list = c.list()
+    if not next(list) then return end
+
+    for i = 1, c.size() do
+        while not list[i] do
+            for j = i + 1, 27 do
+                c.pullItems(peripheral.getName(c), j, 64, j - 1)
+            end
+            list = c.list()
+        end
+    end
+end
+
+---------------------------------------------------------
+-- PLAYBACK CORE (COMPUTRONICS HANDLES AUDIO AUTOMATICALLY)
+---------------------------------------------------------
+
+function playtape(disk, position)
+    -- reset tape safely
+    if s.getPosition() > 0 then
+        s.seek(-s.getSize())
+    end
+
+    moveOut()
+    moveIn(position)
+
+    sortchest()
+end
+
+---------------------------------------------------------
+-- UI SETUP
+---------------------------------------------------------
+
+local function setup()
+    m.clear()
+    m.setCursorPos(1,1)
+    bf.writeOn(m, 1, "PlayH Final (Stable Build)", 2, 2)
+end
+
+local function basemain()
+    m.setCursorPos(1,1)
+    m.write("PlayH Running | Tape Stable")
+end
+
+---------------------------------------------------------
+-- INPUT LOOP (SAFE POLLING ONLY)
+---------------------------------------------------------
+
+local function inputLoop()
+    while true do
+        click = b.timetouch(updaterate, peripheral.getName(m))
+        sleep(0.05)
+    end
+end
+
+---------------------------------------------------------
+-- UI LOOP
+---------------------------------------------------------
+
+local function uiLoop()
+    while true do
+        basemain()
+        sleep(0.1)
+    end
+end
+
+---------------------------------------------------------
+-- MAIN
+---------------------------------------------------------
+
+local function main()
+    setup()
+    applyVolume(defVol)
+
+    parallel.waitForAll(
+        inputLoop,
+        uiLoop
+    )
+end
+
+---------------------------------------------------------
+-- SAFE START
+---------------------------------------------------------
+
+local ok, err = pcall(main)
+
+if not ok then
+    term.clear()
+    term.setCursorPos(1,1)
+    print("PlayH crashed:")
+    print(err)
+
+    moveOut()
+end
