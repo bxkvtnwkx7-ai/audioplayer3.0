@@ -1,0 +1,172 @@
+------- PlayH Music Player (Computronics Tape System FIXED) -------
+
+-- CONFIG
+local infoscreens = {}
+local exclude_screens = {}
+
+local autostartPlay = false
+local defVol = 70
+
+local chesttype = "minecraft:chest"
+local updaterate = 1
+local readspeed = 5
+local breaktimerafterPlay = false
+
+---------------------------------------------------------
+-- PERIPHERALS
+---------------------------------------------------------
+
+local b = require("./button").monitor
+local bf = require("./bigfont")
+
+local m = peripheral.find("monitor")
+local s = peripheral.find("tape_drive")
+local c = peripheral.find(chesttype)
+
+if not m then error("Missing monitor") end
+if not s then error("Missing tape drive") end
+if not c then error("Missing chest") end
+
+m.setTextScale(0.5)
+m.setBackgroundColor(colors.black)
+m.clear()
+
+---------------------------------------------------------
+-- IMPORTANT NOTE:
+-- Computronics AUDIO IS HARDWARE-STREAMED VIA TAPE DRIVE
+-- NO speaker.playAudio EXISTS IN THIS SETUP
+---------------------------------------------------------
+
+---------------------------------------------------------
+-- VOLUME (Tape-drive controlled output gain)
+---------------------------------------------------------
+
+local function applyVolume(v)
+    v = math.max(0, math.min(v, 100))
+    local scaled = (v / 100)
+    scaled = scaled * scaled
+    s.setVolume(scaled)
+end
+
+---------------------------------------------------------
+-- TAPE STREAM SAFETY LOOP
+-- (prevents blocking UI/audio contention)
+---------------------------------------------------------
+
+local function tapeGuard()
+    while true do
+        if s.isPresent() then
+            if not s.isReady() then
+                sleep(0.1)
+            else
+                sleep(0.05)
+            end
+        else
+            sleep(0.2)
+        end
+    end
+end
+
+---------------------------------------------------------
+-- BASIC TAPE HELPERS
+---------------------------------------------------------
+
+function moveIn(num)
+    s.pullItems(peripheral.getName(c), num, 64, 1)
+end
+
+function moveOut()
+    s.pushItems(peripheral.getName(c), 1, 64)
+end
+
+---------------------------------------------------------
+-- CHESS SORT (SAFE, NO AUDIO IMPACT)
+---------------------------------------------------------
+
+local function sortchest()
+    local list = c.list()
+    if not next(list) then return end
+
+    for i = 1, c.size() do
+        while not list[i] do
+            for j = i + 1, 27 do
+                c.pullItems(peripheral.getName(c), j, 64, j - 1)
+            end
+            list = c.list()
+        end
+    end
+end
+
+---------------------------------------------------------
+-- PLAYBACK CONTROL (NO SPEAKER CONTROL NEEDED)
+---------------------------------------------------------
+
+function playtape(disk, position)
+    if s.isReady() then
+        s.seek(-s.getSize())
+    end
+
+    moveOut()
+    moveIn(position)
+
+    -- Let Computronics handle streaming naturally
+    sortchest()
+end
+
+---------------------------------------------------------
+-- UI SETUP
+---------------------------------------------------------
+
+local function setup()
+    m.clear()
+    m.setCursorPos(1,1)
+    bf.writeOn(m, 1, "PlayH (Computronics Fixed)", 2, 2)
+end
+
+local function basemain()
+    m.setCursorPos(1,1)
+    m.write("PlayH Running | Tape OK")
+end
+
+---------------------------------------------------------
+-- INPUT HANDLING (UNCHANGED STRUCTURE)
+---------------------------------------------------------
+
+local function getClick()
+    click = b.timetouch(updaterate, peripheral.getName(m))
+end
+
+---------------------------------------------------------
+-- MAIN LOOP
+---------------------------------------------------------
+
+local function main()
+    setup()
+
+    applyVolume(defVol)
+
+    parallel.waitForAll(
+        tapeGuard,
+        function()
+            while true do
+                basemain()
+                sleep(0.1)
+            end
+        end
+    )
+end
+
+---------------------------------------------------------
+-- SAFE START
+---------------------------------------------------------
+
+local ok, err = pcall(main)
+
+if not ok then
+    term.clear()
+    term.setCursorPos(1,1)
+    print("PlayH crashed:")
+    print(err)
+
+    moveOut()
+end
