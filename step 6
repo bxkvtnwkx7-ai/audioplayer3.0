@@ -1,0 +1,269 @@
+------- PlayH Music Player (FULL SAFE FINAL BUILD) -------
+
+---------------------------------------------------------
+-- GLOBAL SAFETY CORE
+---------------------------------------------------------
+_G.db = _G.db or {}
+_G.setdb = _G.setdb or {}
+
+local function safeStr(v)
+    if v == nil then return "" end
+    return tostring(v)
+end
+
+---------------------------------------------------------
+-- CONFIG
+---------------------------------------------------------
+local infoscreens = {}
+local exclude_screens = {}
+
+local autostartPlay = false
+local defVol = 70
+
+local chesttype = "minecraft:chest"
+local updaterate = 1
+local readspeed = 5
+
+---------------------------------------------------------
+-- SAFE UI WRAPPER (CRASH PROOF)
+---------------------------------------------------------
+local raw = require("./button").monitor
+
+local b = {}
+
+local function safeCall(fn, fallback, ...)
+    local ok, res = pcall(fn, ...)
+    if ok then return res end
+    return fallback
+end
+
+b.switch = function(...) return safeCall(raw.switch, false, ...) end
+b.button = function(...) return safeCall(raw.button, false, ...) end
+b.sliderHor = function(...) return safeCall(raw.sliderHor, 0, ...) end
+b.frame = function(...) return safeCall(raw.frame, nil, ...) end
+b.bar = function(...) return safeCall(raw.bar, nil, ...) end
+b.timetouch = function(...) return safeCall(raw.timetouch, nil, ...) end
+
+---------------------------------------------------------
+-- SAFE BIGFONT WRAPPER (FIXES NIL CRASHES)
+---------------------------------------------------------
+local rawBF = require("./bigfont")
+
+local bf = {}
+
+bf.writeOn = function(m, scale, text, x, y)
+    text = safeStr(text)
+    return safeCall(rawBF.writeOn, nil, m, scale, text, x, y)
+end
+
+---------------------------------------------------------
+-- PERIPHERALS
+---------------------------------------------------------
+local m = peripheral.find("monitor")
+local s = peripheral.find("tape_drive")
+local c = peripheral.find(chesttype)
+
+if not m then error("Missing monitor") end
+if not s then error("Missing tape drive") end
+if not c then error("Missing chest") end
+
+m.setTextScale(0.5)
+
+---------------------------------------------------------
+-- VOLUME CONTROL
+---------------------------------------------------------
+local function applyVolume(v)
+    v = math.max(0, math.min(v, 100))
+    local scaled = (v / 100)
+    scaled = scaled * scaled
+    s.setVolume(scaled)
+end
+
+---------------------------------------------------------
+-- TAPE CONTROL
+---------------------------------------------------------
+local function moveIn(num)
+    s.pullItems(peripheral.getName(c), num, 64, 1)
+end
+
+local function moveOut()
+    s.pushItems(peripheral.getName(c), 1, 64)
+end
+
+---------------------------------------------------------
+-- PLAYBACK CORE (COMPUTRONICS NATIVE)
+---------------------------------------------------------
+local function playtape()
+    if s.getPosition() > 0 then
+        s.seek(-s.getSize())
+    end
+
+    moveOut()
+    moveIn(1)
+end
+
+---------------------------------------------------------
+-- PLAYLIST SYSTEM
+---------------------------------------------------------
+local objects = {}
+
+local function updateplaylist()
+    objects = {}
+    local list = c.list()
+
+    for i = 1, c.size() do
+        if list[i] then
+            local meta = c.getItemMeta(i)
+            local label = safeStr(meta and meta.media and meta.media.label)
+
+            if label == "" then
+                label = "UnTitled"
+            end
+
+            objects[i] = label
+        end
+    end
+end
+
+---------------------------------------------------------
+-- SAFE CHEST SORT
+---------------------------------------------------------
+local function sortchest()
+    local list = c.list()
+    if not next(list) then return end
+
+    for i = 1, c.size() do
+        while not list[i] do
+            for j = i + 1, 27 do
+                c.pullItems(peripheral.getName(c), j, 64, j - 1)
+            end
+            list = c.list()
+        end
+    end
+end
+
+---------------------------------------------------------
+-- UI SETUP
+---------------------------------------------------------
+local function setup()
+    m.clear()
+
+    b.frame(peripheral.getName(m), 3, 19, 75, 17, "white", "blue")
+
+    bf.writeOn(m, 2, "PlayH Music System", nil, 2)
+    bf.writeOn(m, 1, "Full Safe Final Build", nil, 4)
+end
+
+---------------------------------------------------------
+-- MAIN UI
+---------------------------------------------------------
+local click = nil
+
+local function basemain()
+
+    b.frame(peripheral.getName(m), 3, 19, 75, 17, "white", "blue")
+
+    -----------------------------------------------------
+    -- PLAYLIST
+    -----------------------------------------------------
+    m.setBackgroundColor(colors.green)
+    m.setTextColor(colors.black)
+
+    for k, v in pairs(objects) do
+        if b.button(peripheral.getName(m), click, 7, 7 + k, v) then
+            playtape()
+        end
+    end
+
+    -----------------------------------------------------
+    -- PLAY / STOP
+    -----------------------------------------------------
+    if b.switch("db", 3, click, 68, 8, "red", "green", "white", "PLAY") then
+        s.play()
+    else
+        s.stop()
+    end
+
+    -----------------------------------------------------
+    -- SHUFFLE
+    -----------------------------------------------------
+    if b.switch("db", 2, click, 17, 4, "red", "green", "white", "shuffle") then
+        sortchest()
+        updateplaylist()
+    end
+
+    -----------------------------------------------------
+    -- EJECT
+    -----------------------------------------------------
+    if b.button(peripheral.getName(m), click, 63, 7, "EJECT TAPE") then
+        s.stop()
+        moveOut()
+    end
+
+    -----------------------------------------------------
+    -- VOLUME
+    -----------------------------------------------------
+    local vol = b.sliderHor("db", 1, click, 33, 13, 38, "blue", "white") or defVol
+    applyVolume(vol)
+
+    -----------------------------------------------------
+    -- LABEL (FULL NIL SAFE)
+    -----------------------------------------------------
+    local label = safeStr(s.getLabel())
+    if label == "" then label = "UnTitled" end
+
+    bf.writeOn(m, 1, label, 30, 7)
+end
+
+---------------------------------------------------------
+-- THREADS
+---------------------------------------------------------
+local function inputLoop()
+    while true do
+        click = b.timetouch(updaterate, peripheral.getName(m))
+        sleep(0.05)
+    end
+end
+
+local function renderLoop()
+    while true do
+        setup()
+        basemain()
+        sleep(0.05)
+    end
+end
+
+local function updateLoop()
+    while true do
+        updateplaylist()
+        sleep(readspeed)
+    end
+end
+
+---------------------------------------------------------
+-- MAIN
+---------------------------------------------------------
+local function main()
+    updateplaylist()
+    applyVolume(defVol)
+
+    parallel.waitForAll(
+        inputLoop,
+        renderLoop,
+        updateLoop
+    )
+end
+
+---------------------------------------------------------
+-- SAFE START
+---------------------------------------------------------
+local ok, err = pcall(main)
+
+if not ok then
+    term.clear()
+    term.setCursorPos(1,1)
+    print("PlayH crashed:")
+    print(err)
+
+    moveOut()
+end
