@@ -1,0 +1,300 @@
+---------------------------------------------------------
+-- PLAYH ENGINE v2 (POLISHED STABLE BUILD)
+-- CC:Tweaked / Computronics Tape System
+---------------------------------------------------------
+
+-------------------------
+-- STATE SYSTEM
+-------------------------
+local UI = {}
+UI.state = {}
+UI.visual = { hover = nil, press = nil }
+UI.scroll = 0
+
+function UI.get(k, d)
+    local v = UI.state[k]
+    if v == nil then return d end
+    return v
+end
+
+function UI.set(k, v)
+    UI.state[k] = v
+end
+
+-------------------------
+-- SAFE WRAPPER
+-------------------------
+local function resetColors()
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+end
+
+-------------------------
+-- PERIPHERALS
+-------------------------
+local mon = peripheral.find("monitor")
+local tape = peripheral.find("tape_drive")
+local chest = peripheral.find("minecraft:chest")
+
+if not mon then error("Missing monitor") end
+if not tape then error("Missing tape drive") end
+if not chest then error("Missing chest") end
+
+mon.setTextScale(0.5)
+
+-------------------------
+-- INPUT
+-------------------------
+local click = nil
+
+local function getClick()
+    click = { os.pullEvent("monitor_touch") }
+end
+
+-------------------------
+-- HOVER DETECT
+-------------------------
+local function hover(x, y, w, h)
+    if not click then return false end
+    local _, _, cx, cy = table.unpack(click)
+    return cx >= x and cx <= x + w and cy >= y and cy <= y + h
+end
+
+-------------------------
+-- BUTTON (POLISHED)
+-------------------------
+function UI.button(x, y, label)
+    label = tostring(label or "")
+    local w = #label
+
+    local isHover = hover(x, y, w, 1)
+
+    local bg = colors.gray
+    local fg = colors.white
+
+    if isHover then
+        bg = colors.lightGray
+        fg = colors.black
+    end
+
+    mon.setBackgroundColor(bg)
+    mon.setTextColor(fg)
+    mon.setCursorPos(x, y)
+    mon.write(label)
+
+    resetColors()
+
+    if click then
+        local _, _, cx, cy = table.unpack(click)
+        if cx >= x and cx <= x + w and cy == y then
+            return true
+        end
+    end
+
+    return false
+end
+
+-------------------------
+-- SLIDER (SMOOTH)
+-------------------------
+function UI.slider(id, x1, x2, y, min, max)
+
+    local target = UI.get(id, min)
+    local smooth = UI.get(id .. "_s", target)
+
+    if click then
+        local _, _, cx, cy = table.unpack(click)
+        if cy == y and cx >= x1 and cx <= x2 then
+            local ratio = (cx - x1) / (x2 - x1)
+            target = math.floor(min + (max - min) * ratio)
+            UI.set(id, target)
+        end
+    end
+
+    smooth = smooth + (target - smooth) * 0.35
+    UI.set(id .. "_s", smooth)
+
+    local val = math.floor(smooth)
+
+    -- bar bg
+    mon.setBackgroundColor(colors.gray)
+    mon.setCursorPos(x1, y)
+    mon.write(string.rep(" ", x2 - x1))
+
+    -- fill
+    local width = x2 - x1
+    local filled = math.floor((val - min) / (max - min) * width)
+
+    mon.setBackgroundColor(colors.lime)
+    mon.setCursorPos(x1, y)
+    mon.write(string.rep(" ", filled))
+
+    resetColors()
+
+    return val
+end
+
+-------------------------
+-- DRAW HELPERS
+-------------------------
+function UI.label(text, x, y)
+    mon.setCursorPos(x, y)
+    mon.setTextColor(colors.white)
+    mon.setBackgroundColor(colors.black)
+    mon.write(tostring(text or ""))
+end
+
+function UI.frame(x, y, w, h, col)
+    mon.setBackgroundColor(colors[col] or colors.gray)
+    for i = 0, h do
+        mon.setCursorPos(x, y + i)
+        mon.write(string.rep(" ", w))
+    end
+    resetColors()
+end
+
+-------------------------
+-- AUDIO
+-------------------------
+function UI.play()
+    tape.seek(-tape.getSize())
+    tape.play()
+end
+
+function UI.stop()
+    tape.stop()
+end
+
+function UI.setVolume(v)
+    v = math.max(0, math.min(100, v))
+    tape.setVolume((v / 100) ^ 2)
+end
+
+-------------------------
+-- PLAYLIST
+-------------------------
+local playlist = {}
+
+local function updatePlaylist()
+    playlist = {}
+    local list = chest.list()
+
+    for i = 1, chest.size() do
+        if list[i] then
+            local meta = chest.getItemMeta(i)
+            local name = meta and meta.media and meta.media.label or "UnTitled"
+            playlist[i] = (name ~= "" and name) or "UnTitled"
+        end
+    end
+end
+
+local function moveIn(slot)
+    tape.pullItems(peripheral.getName(chest), slot, 64, 1)
+end
+
+local function moveOut()
+    tape.pushItems(peripheral.getName(chest), 1, 64)
+end
+
+local function playSlot(slot)
+    tape.stop()
+    moveOut()
+    moveIn(slot)
+    tape.seek(-tape.getSize())
+end
+
+-------------------------
+-- SCROLL
+-------------------------
+function UI.scrollPlaylist(max)
+    if not click then return end
+    local _, _, _, cy = table.unpack(click)
+
+    if cy == 6 then
+        UI.scroll = math.max(0, UI.scroll - 1)
+    elseif cy == 15 then
+        UI.scroll = math.min(max, UI.scroll + 1)
+    end
+end
+
+-------------------------
+-- RENDER
+-------------------------
+local function render()
+
+    mon.setBackgroundColor(colors.black)
+    mon.setTextColor(colors.white)
+    mon.clear()
+
+    UI.frame(2, 2, 70, 18, "blue")
+
+    UI.label("PLAYH ENGINE v2", 4, 4)
+
+    -------------------------
+    -- PLAYLIST (SCROLLABLE)
+    -------------------------
+    local count = 0
+    for _ in pairs(playlist) do count = count + 1 end
+
+    UI.scrollPlaylist(count)
+
+    local i = 0
+    local shown = 0
+
+    for k, v in pairs(playlist) do
+        i = i + 1
+
+        if i > UI.scroll and shown < 8 then
+            shown = shown + 1
+            local y = 6 + shown
+
+            if UI.button(4, y, v) then
+                playSlot(k)
+            end
+
+            UI.label(v, 4, y)
+        end
+    end
+
+    -------------------------
+    -- CONTROLS
+    -------------------------
+    if UI.button(60, 5, "PLAY") then UI.play() end
+    if UI.button(60, 7, "STOP") then UI.stop() end
+    if UI.button(60, 9, "EJECT") then UI.stop(); moveOut() end
+
+    -------------------------
+    -- SHUFFLE
+    -------------------------
+    if UI.button(60, 11, "REFRESH") then
+        updatePlaylist()
+    end
+
+    -------------------------
+    -- VOLUME
+    -------------------------
+    local vol = UI.slider("volume", 4, 30, 16, 0, 100)
+    UI.setVolume(vol)
+
+    UI.label("VOL: " .. vol, 4, 17)
+end
+
+-------------------------
+-- MAIN LOOP
+-------------------------
+local function inputLoop()
+    while true do
+        getClick()
+        sleep(0)
+    end
+end
+
+local function renderLoop()
+    while true do
+        updatePlaylist()
+        render()
+        sleep(0.05)
+    end
+end
+
+parallel.waitForAll(inputLoop, renderLoop)
